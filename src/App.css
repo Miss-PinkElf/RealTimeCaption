@@ -14,6 +14,7 @@ body {
   -webkit-app-region: drag; /* 关键：允许通过拖拽body来移动无边框窗口 */
 }
 
+
 .App {
   background-color: rgba(30, 30, 40, 0.88); /* 深蓝灰色调，88%不透明度，可调整 */
   color: #e8e8e8; /* 整体文字颜色改为更亮的浅灰色 */
