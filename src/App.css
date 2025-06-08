@@ -1,38 +1,119 @@
+/* src/App.css */
+body {
+  background-color: transparent !important;
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  user-select: none; /* 禁止选择文本，对于字幕展示更友好 */
+  overflow: hidden;  /* 防止出现不必要的滚动条，保持界面干净 */
+  height: 100vh;     /* 确保body占满Electron窗口 */
+  width: 100vw;
+  -webkit-app-region: drag; /* 关键：允许通过拖拽body来移动无边框窗口 */
+}
+
 .App {
-  text-align: center;
-}
-
-.App-logo {
-  height: 40vmin;
-  pointer-events: none;
-}
-
-@media (prefers-reduced-motion: no-preference) {
-  .App-logo {
-    animation: App-logo-spin infinite 20s linear;
-  }
-}
-
-.App-header {
-  background-color: #282c34;
-  min-height: 100vh;
+  background-color: rgba(30, 30, 40, 0.88); /* 深蓝灰色调，88%不透明度，可调整 */
+  color: #e8e8e8; /* 整体文字颜色改为更亮的浅灰色 */
+  height: 100%; /* 占满body的高度 */
+  width: 100%;  /* 占满body的宽度 */
   display: flex;
   flex-direction: column;
-  align-items: center;
+  justify-content: center; /* 主要内容（字幕）垂直居中 */
+  align-items: center;   /* 主要内容（字幕）水平居中 */
+  text-align: center;
+  padding: 10px 20px; /* 左右内边距稍大，上下稍小 */
+  box-sizing: border-box;
+  border-radius: 8px; /* 轻微圆角 */
+  box-shadow: 0 5px 20px rgba(0, 0, 0, 0.4); /* 更明显的阴影，增加立体感 */
+  position: relative; /* 用于控件区的绝对定位 */
+  overflow: hidden;   /* 确保子元素不溢出圆角 */
+}
+
+.subtitle-display-area {
+  flex-grow: 1; /* 占据尽可能多的垂直空间，帮助垂直居中字幕 */
+  display: flex;
+  align-items: center; /* 垂直居中字幕文本 */
+  justify-content: center; /* 水平居中字幕文本 */
+  width: 100%;
+  padding: 5px 0;
+  -webkit-app-region: no-drag; /* 字幕区域不可拖动窗口 */
+}
+
+.subtitle-text {
+  padding: 5px 10px;
+  border-radius: 4px;
+  font-size: 22px; /* 可根据窗口高度调整 */
+  font-weight: 600; /* 稍粗的字体 */
+  color: #ffffff;
+  text-shadow: 1px 1px 2px rgba(0,0,0,0.6), 0 0 5px rgba(0,0,0,0.3); /* 更清晰的文字阴影 */
+  line-height: 1.5; /* 增加行高，避免文字太挤 */
+  max-width: 95%;   /* 防止单行字幕过长超出界面 */
+}
+
+.controls-area {
+  position: absolute;
+  bottom: 10px; /* 距离App底部的距离 */
+  left: 50%;
+  transform: translateX(-50%);
+  width: auto;
+  padding: 8px 12px; /* 控件区域的内边距 */
+  background-color: rgba(20, 20, 30, 0.75); /* 控件区背景，比主背景更透明或不同色调 */
+  border-radius: 20px; /* 更圆润的胶囊形状 */
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+
+  display: flex;
   justify-content: center;
-  font-size: calc(10px + 2vmin);
-  color: white;
+  align-items: center;
+  gap: 10px; /* 按钮间距 */
+
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.25s ease-out, visibility 0.25s ease-out, transform 0.25s ease-out;
+  transform: translateX(-50%) translateY(5px); /* 初始时略微向下偏移并保持居中 */
+
+  -webkit-app-region: no-drag; /* 控件区域不可拖动窗口 */
 }
 
-.App-link {
-  color: #61dafb;
+.App:hover .controls-area {
+  opacity: 1;
+  visibility: visible;
+  transform: translateX(-50%) translateY(0); /* 悬浮时回到原位 */
 }
 
-@keyframes App-logo-spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
+.controls-area button {
+  background-color: rgba(60, 60, 80, 0.7); /* 按钮背景色 */
+  color: #d8d8d8;
+  border: 1px solid rgba(255, 255, 255, 0.1); /* 轻微边框增加质感 */
+  border-radius: 15px; /* 圆形或胶囊按钮 */
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.2s ease, transform 0.1s ease, box-shadow 0.2s ease;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+  -webkit-app-region: no-drag; /* 按钮本身不可拖动 */
+}
+
+.controls-area button:hover:not(:disabled) {
+  background-color: rgba(80, 80, 100, 0.85);
+  color: #ffffff;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+}
+
+.controls-area button:active:not(:disabled) {
+  background-color: rgba(50, 50, 70, 0.8);
+  transform: translateY(0px);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.2);
+}
+
+.controls-area button:disabled {
+  background-color: rgba(70, 70, 70, 0.5);
+  color: #888;
+  cursor: not-allowed;
+  border-color: rgba(100,100,100,0.1);
+  box-shadow: none;
 }
