@@ -1,0 +1,11 @@
+# =======================================================
+# SSH Client Configuration File
+# =======================================================
+
+# --- 规则 1: 针对 GitHub 的特殊配置 ---
+# 这是我们之前为了解决端口封锁问题添加的规则。
+# 当你 ssh 到 github.com 时，实际会连接到 ssh.github.com 的 443 端口。
+Host github.com
+  HostName ssh.github.com
+  User git
+  Port 443
