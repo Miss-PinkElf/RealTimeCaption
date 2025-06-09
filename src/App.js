@@ -1,41 +1,39 @@
 // src/App.js
-import React, { useState, useEffect } from "react";
+import React, { useState, useCallback } from "react";
 import "./App.css";
+import { start, stop } from "./capturer"; // 引入新的 capturer 模块
 
 function App() {
   const [isCapturing, setIsCapturing] = useState(false);
   const [subtitles, setSubtitles] = useState("点击“开始”按钮启动字幕");
 
-  // 监听从主进程传来的字幕和错误信息
-  useEffect(() => {
-    // 监听字幕更新
-    window.electronAPI.onSubtitle((text) => {
-      setSubtitles(text);
-    });
+  // 使用 useCallback 包装回调函数，提高性能
+  const handleCaptureError = useCallback((errorMsg) => {
+    console.error("Capture Error:", errorMsg);
+    setSubtitles(`错误: ${errorMsg}`);
+    setIsCapturing(false);
+  }, []);
 
-    // 监听捕获错误
-    window.electronAPI.onCaptureError((error) => {
-      console.error("Capture Error:", error);
-      setSubtitles(`错误: ${error}`);
-      setIsCapturing(false); // 出错时停止
-    });
+  const handleSubtitleUpdate = useCallback((text) => {
+    setSubtitles(text);
+  }, []);
 
-    // 组件卸载时清理监听器
-    return () => {
-      window.electronAPI.cleanup();
-    };
-  }, []); // 空依赖数组确保只在组件挂载时注册一次
+  // 不再需要 useEffect 来监听 IPC 事件
 
   const handleStartStop = () => {
     const nextState = !isCapturing;
     setIsCapturing(nextState);
 
     if (nextState) {
-      setSubtitles("正在连接后端服务...");
-      window.electronAPI.startCapture();
+      setSubtitles("正在获取音频设备...");
+      // 直接调用 capturer 的 start 方法，并传入回调
+      start({
+        onSubtitle: handleSubtitleUpdate,
+        onError: handleCaptureError,
+      });
     } else {
+      stop();
       setSubtitles("字幕已停止，悬浮可操作");
-      window.electronAPI.stopCapture();
     }
   };
 
