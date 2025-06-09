@@ -168,7 +168,7 @@ async function stop() {
       console.log("渲染进程：WebSocket 连接已关闭");
     }
   }
-
+  const k = 1;
   ws = null;
 }
 
