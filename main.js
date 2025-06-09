@@ -1,5 +1,5 @@
 // public/electron.js
-const { app, BrowserWindow } = require("electron");
+const { app, BrowserWindow, ipcMain } = require("electron");
 const path = require("path");
 const isDev = require("electron-is-dev");
 
@@ -11,7 +11,7 @@ function createWindow() {
     frame: false, // 关键：无边框窗口
     alwaysOnTop: true, // 窗口总在最前
     resizable: false, // 禁止调整窗口大小，更像工具应用
-    skipTaskbar: true, // (可选) 不在任务栏显示图标，更像一个覆盖层工具
+    skipTaskbar: false, // (可选) 不在任务栏显示图标，更像一个覆盖层工具
     webPreferences: {
       preload: path.join(__dirname, "preload.js"), // (推荐) 预加载脚本
       nodeIntegration: false, // 为了安全，保持 false
@@ -45,6 +45,23 @@ app.whenReady().then(() => {
 
 app.on("window-all-closed", function () {
   if (process.platform !== "darwin") app.quit();
+});
+
+// --- 新增 IPC 通信处理 ---
+ipcMain.on("start-capture", () => {
+  console.log("接收到 'start-capture' 指令");
+  audioCapturer.start({
+    win: mainWindow,
+    onError: (error) => {
+      // 当发生错误时，通知前端
+      mainWindow.webContents.send("on-capture-error", error);
+    },
+  });
+});
+
+ipcMain.on("stop-capture", () => {
+  console.log("接收到 'stop-capture' 指令");
+  audioCapturer.stop();
 });
 
 // (推荐) 创建一个空的 public/preload.js 文件:

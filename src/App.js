@@ -4,50 +4,47 @@ import "./App.css";
 
 function App() {
   const [isCapturing, setIsCapturing] = useState(false);
-  const [subtitles, setSubtitles] = useState("点“开始”按钮启动字幕"); // 初始提示
+  const [subtitles, setSubtitles] = useState("点击“开始”按钮启动字幕");
 
-  // --- 模拟字幕更新 ---
+  // 监听从主进程传来的字幕和错误信息
   useEffect(() => {
-    let intervalId;
-    if (isCapturing) {
-      const demoSubtitles = [
-        "你好，这是实时字幕演示。",
-        "Electron 和 React 配合得很好。",
-        "Java (后端) 将处理音频和翻译。",
-        "当前为模拟字幕...",
-        "鼠标悬浮可显示控制选项。",
-        "样式可以进一步定制哦！",
-      ];
-      let i = 0;
-      setSubtitles(demoSubtitles[i]); // 立即显示第一条
-      i++;
-      intervalId = setInterval(() => {
-        setSubtitles(demoSubtitles[i % demoSubtitles.length]);
-        i++;
-      }, 3000); // 每3秒切换一次
-    } else {
-      if (subtitles !== "点“开始”按钮启动字幕") {
-        // 避免在初始状态时重复设置
-        setSubtitles("字幕已停止，悬浮可操作");
-      }
-    }
-    return () => clearInterval(intervalId);
-  }, [isCapturing]); // 依赖 isCapturing，当它变化时重新执行
+    // 监听字幕更新
+    window.electronAPI.onSubtitle((text) => {
+      setSubtitles(text);
+    });
+
+    // 监听捕获错误
+    window.electronAPI.onCaptureError((error) => {
+      console.error("Capture Error:", error);
+      setSubtitles(`错误: ${error}`);
+      setIsCapturing(false); // 出错时停止
+    });
+
+    // 组件卸载时清理监听器
+    return () => {
+      window.electronAPI.cleanup();
+    };
+  }, []); // 空依赖数组确保只在组件挂载时注册一次
 
   const handleStartStop = () => {
-    setIsCapturing(!isCapturing);
-    // TODO: 通过 IPC 通知后端开始/停止
-    console.log(isCapturing ? "请求停止捕获..." : "请求开始捕获...");
+    const nextState = !isCapturing;
+    setIsCapturing(nextState);
+
+    if (nextState) {
+      setSubtitles("正在连接后端服务...");
+      window.electronAPI.startCapture();
+    } else {
+      setSubtitles("字幕已停止，悬浮可操作");
+      window.electronAPI.stopCapture();
+    }
   };
 
   const handleExportSubtitles = () => {
-    // TODO: 实现导出逻辑
     console.log("请求导出字幕...");
     alert("导出字幕功能待实现！");
   };
 
   const handleAdjustStyles = () => {
-    // TODO: 实现样式调整界面
     console.log("请求调整样式...");
     alert("调整样式功能待实现！");
   };
