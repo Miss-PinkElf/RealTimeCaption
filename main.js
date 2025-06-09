@@ -6,11 +6,7 @@ const isDev = require("electron-is-dev");
 let mainWindow;
 
 function createWindow() {
-  // --- 关键诊断代码 ---
   const preloadPath = path.join(__dirname, "public", "preload.js");
-
-  // --- 诊断代码结束 ---
-
   mainWindow = new BrowserWindow({
     width: 800,
     height: 120,
