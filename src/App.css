@@ -7,16 +7,19 @@ body {
     sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  user-select: none; /* 禁止选择文本，对于字幕展示更友好 */
-  overflow: hidden;  /* 防止出现不必要的滚动条，保持界面干净 */
-  height: 100vh;     /* 确保body占满Electron窗口 */
+  user-select: none;
+  height: 100vh;
   width: 100vw;
-  -webkit-app-region: drag; /* 关键：允许通过拖拽body来移动无边框窗口 */
+  overflow: hidden;
 }
 
 .App {
-  background-color: rgba(25, 28, 32, 0.92); /* 更深邃、现代的炭黑色，略微增加不透明度 */
-  color: #f0f0f0; /* 提高默认文字颜色亮度 */
+  -webkit-app-region: drag;
+  /* (核心修改) 默认背景完全透明 */
+  background-color: transparent;
+  box-shadow: 0 5px 20px rgba(0, 0, 0, 0.0); /* 默认阴影也透明 */
+
+  color: #f0f0f0;
   height: 100%;
   width: 100%;
   display: flex;
@@ -24,12 +27,27 @@ body {
   justify-content: center;
   align-items: center;
   text-align: center;
-  padding: 14px 24px; /* 增加垂直内边距，解决拥挤感 */
-  box-sizing: border-box;
-  border-radius: 12px; /* 更柔和的圆角 */
-  box-shadow: 0 5px 20px rgba(0, 0, 0, 0.45); /* 更明显的阴影，增加深度感 */
+  border-radius: 12px;
   position: relative;
   overflow: hidden;
+  /* (核心修改) 让背景色、阴影和透明度的变化都有过渡效果 */
+  transition: background-color 0.4s ease, box-shadow 0.4s ease, opacity 0.4s ease;
+
+  padding: 10px;
+  box-sizing: border-box;
+}
+
+/* (核心修改) 不再使用 .App:hover，而是使用我们用JS添加的 .panel-visible 类 */
+.App.panel-visible {
+  background-color: rgba(45, 48, 53, 0.92);
+  box-shadow: 0 5px 20px rgba(0, 0, 0, 0.45);
+}
+
+.subtitle-display-area,
+.top-controls-area,
+.modal-overlay,
+.settings-modal-container {
+  -webkit-app-region: no-drag;
 }
 
 .subtitle-display-area {
@@ -38,84 +56,71 @@ body {
   align-items: center;
   justify-content: center;
   width: 100%;
-  padding: 0;
-  -webkit-app-region: no-drag; /* 字幕区域不可拖动窗口 */
+  cursor: pointer;
 }
 
 .subtitle-text {
-  font-size: 22px;
+  font-size: 28px;
   font-weight: 600;
   color: #ffffff;
-  /* 关键：添加文本阴影以提高在任何背景下的可读性 */
-  text-shadow: 0px 1px 4px rgba(0, 0, 0, 0.8);
-  line-height: 1.6; /* 增加行距，让文本更易读 */
+  text-shadow: 0px 2px 6px rgba(0, 0, 0, 0.9);
+  line-height: 1.6;
+  padding: 0 20px;
+  word-break: break-all;
   max-width: 98%;
-
-  /* --- 限制两行显示的核心代码 --- */
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  word-break: break-all; /* 防止过长单词不换行 */
 }
 
-.controls-area {
+.top-controls-area {
   position: absolute;
-  bottom: 10px;
-  left: 50%;
-  width: auto;
-  padding: 6px 12px;
-  background-color: rgba(35, 38, 43, 0.85); /* 与主背景协调的控件背景 */
-  border-radius: 18px; /* 胶囊形状 */
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  top: 8px;
+  right: 8px;
+  display: flex;
+  gap: 8px;
+  opacity: 0;
+  visibility: hidden;
+  /* (核心修改) 控制按钮的出现也使用 opacity 和 visibility 过渡 */
+  transition: opacity 0.4s ease, visibility 0.4s ease;
+  z-index: 1000;
+}
+
+/* (核心修改) 控制按钮的可见性也由 .panel-visible 类控制 */
+.App.panel-visible .top-controls-area {
+  opacity: 1;
+  visibility: visible;
+}
+
+.top-controls-area button {
+  background: rgba(255, 255, 255, 0.15);
+  border: none;
+  border-radius: 50%;
+  color: #e0e0e0;
+  width: 24px;
+  height: 24px;
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color 0.2s ease;
+}
+
+.top-controls-area button:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+.modal-overlay,
+.settings-modal-container {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 99;
+}
+
+.settings-modal-container {
   display: flex;
   justify-content: center;
   align-items: center;
-  gap: 12px;
-  opacity: 0;
-  visibility: hidden;
-  transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1); /* 更平滑的动画曲线 */
-  transform: translate(-50%, 10px);
-  -webkit-app-region: no-drag;
-}
-
-.App:hover .controls-area {
-  opacity: 1;
-  visibility: visible;
-  transform: translate(-50%, 0);
-}
-
-.controls-area button {
-  background-color: rgba(80, 85, 95, 0.75);
-  color: #e8e8e8;
-  border: none; /* 移除边框，更现代 */
-  border-radius: 15px;
-  padding: 7px 16px;
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.15);
-  -webkit-app-region: no-drag;
-}
-
-.controls-area button:hover:not(:disabled) {
-  background-color: rgba(100, 105, 115, 0.95);
-  color: #ffffff;
-  transform: translateY(-2px);
-  box-shadow: 0 3px 8px rgba(0,0,0,0.2);
-}
-
-.controls-area button:active:not(:disabled) {
-  background-color: rgba(70, 75, 85, 0.8);
-  transform: translateY(0px);
-  box-shadow: 0 1px 3px rgba(0,0,0,0.15);
-}
-
-.controls-area button:disabled {
-  background-color: rgba(55, 58, 64, 0.7);
-  color: #909090;
-  cursor: not-allowed;
-  box-shadow: none;
-  transform: translateY(0);
+  z-index: 100;
 }
