@@ -1,97 +1,189 @@
 package com.example.realtimecaption;
 
+import org.apache.hc.client5.http.classic.methods.HttpPost;
+import org.apache.hc.client5.http.entity.mime.ByteArrayBody;
+import org.apache.hc.client5.http.entity.mime.MultipartEntityBuilder;
+import org.apache.hc.client5.http.impl.classic.CloseableHttpClient;
+import org.apache.hc.client5.http.impl.classic.HttpClients;
+import org.apache.hc.core5.http.HttpEntity;
+import org.apache.hc.core5.http.io.entity.EntityUtils;
 import org.json.JSONObject;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.BinaryMessage;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.AbstractWebSocketHandler;
-import org.vosk.Model;
-import org.vosk.Recognizer;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 @Component
 public class SubtitleWebSocketHandler extends AbstractWebSocketHandler {
 
-    private final Model model;
-    private final Map<String, Recognizer> recognizers = new ConcurrentHashMap<>();
+    @Value("${whisper.api.url}")
+    private String whisperApiUrl;
+
+    private final Map<String, ByteArrayOutputStream> audioBuffers = new ConcurrentHashMap<>();
     private final Map<String, Boolean> speakingState = new ConcurrentHashMap<>();
+    private final ExecutorService executorService = Executors.newCachedThreadPool();
 
-    private static final int MAX_LINE_LENGTH = 30;
-
-    /**
-     * 静音阈值，用于判断音频是否为静音。这是一个关键的可调参数。
-     * - 如果你说话的停顿没有被识别成句尾，可以尝试【调高】此值，比如 250.0 或 300.0。
-     * - 如果你一句话还没说完，中间的短暂喘息就被识别成句尾，可以尝试【调低】此值，比如 150.0 或 100.0。
-     */
     private static final double SILENCE_THRESHOLD = 200.0;
+    private static final int SAMPLE_RATE = 16000;
+    private static final short NUM_CHANNELS = 1; // 单声道
+    private static final short BITS_PER_SAMPLE = 16; // 16位
+    private static final int BYTES_PER_SAMPLE = BITS_PER_SAMPLE / 8;
+    private static final int MIN_AUDIO_MS = 500;
+    private static final int MAX_BUFFER_SECONDS = 5;
+    private static final int MAX_BUFFER_BYTES = MAX_BUFFER_SECONDS * SAMPLE_RATE * BYTES_PER_SAMPLE;
+    private static final int MIN_BUFFER_BYTES = MIN_AUDIO_MS * (SAMPLE_RATE / 1000) * BYTES_PER_SAMPLE;
 
-    public SubtitleWebSocketHandler(Model model) {
-        this.model = model;
-    }
-
+    // ... afterConnectionEstablished, handleBinaryMessage, sendBufferAndReset 方法无变化 ...
     @Override
     public void afterConnectionEstablished(WebSocketSession session) throws Exception {
         System.out.println("Client connected: " + session.getId());
-        Recognizer recognizer = new Recognizer(model, 16000.0f);
-        recognizers.put(session.getId(), recognizer);
+        audioBuffers.put(session.getId(), new ByteArrayOutputStream());
         speakingState.put(session.getId(), false);
     }
 
     @Override
     protected void handleBinaryMessage(WebSocketSession session, BinaryMessage message) throws IOException {
-        Recognizer recognizer = recognizers.get(session.getId());
-        if (recognizer == null) return;
-
         byte[] payload = message.getPayload().array();
+        ByteArrayOutputStream buffer = audioBuffers.get(session.getId());
+        if (buffer == null) return;
+
         boolean isSilent = isSilent(payload);
         boolean wasSpeaking = speakingState.getOrDefault(session.getId(), false);
 
         if (!isSilent) {
-            // 用户正在说话
             speakingState.put(session.getId(), true);
+            buffer.write(payload);
 
-            // 持续将音频喂给识别器，忽略 acceptWaveForm 的返回值
-            recognizer.acceptWaveForm(payload, payload.length);
-
-            // 只获取并发送【中间结果】，用于实时反馈，不进行切分
-            String partialResult = recognizer.getPartialResult();
-            sendText(session, partialResult, false);
-
-        } else if (wasSpeaking) {
-            // 用户刚刚停止说话 (从说话状态变到静音状态)
-            speakingState.put(session.getId(), false);
-
-            // 这是获取带标点最终结果的【唯一时机】
-            String finalResult = recognizer.getFinalResult();
-
-            // 对这个最终结果进行切分
-            sendText(session, finalResult, true);
+            if (buffer.size() > MAX_BUFFER_BYTES) {
+                System.out.println("DEBUG: Buffer size (" + buffer.size() + " bytes) exceeded limit. Force sending.");
+                sendBufferAndReset(session, buffer);
+            }
+        } else {
+            if (wasSpeaking) {
+                System.out.println("DEBUG: Silence detected. Sending audio.");
+                sendBufferAndReset(session, buffer);
+            }
         }
-        // 如果之前和现在都是静音，则什么都不做
     }
 
-    @Override
-    public void afterConnectionClosed(WebSocketSession session, CloseStatus status) throws IOException {
-        System.out.println("Client disconnected: " + session.getId());
-        Recognizer recognizer = recognizers.get(session.getId());
-        if(recognizer != null){
-            String finalResult = recognizer.getFinalResult();
-            sendText(session, finalResult, true);
-            recognizer.close();
+    private void sendBufferAndReset(WebSocketSession session, ByteArrayOutputStream buffer) {
+        if (buffer.size() > MIN_BUFFER_BYTES) {
+            byte[] audioData = buffer.toByteArray();
+            executorService.submit(() -> transcribeAndSend(session, audioData));
+        } else {
+            System.out.println("DEBUG: Audio buffer too small (" + buffer.size() + " bytes), discarding.");
         }
-        recognizers.remove(session.getId());
+        buffer.reset();
+        speakingState.put(session.getId(), false);
+    }
+
+
+    private void transcribeAndSend(WebSocketSession session, byte[] pcmData) {
+        if (pcmData.length == 0 || !session.isOpen()) return;
+
+        // --- (核心修改) ---
+        // 在发送前，为裸PCM数据添加WAV头，构成一个完整的WAV文件
+        byte[] wavData;
+        try {
+            wavData = createWavFile(pcmData);
+            System.out.println("Sending " + wavData.length + " bytes of WAV data to Python service for session " + session.getId());
+        } catch (IOException e) {
+            System.err.println("Failed to create WAV header: " + e.getMessage());
+            return;
+        }
+
+        try (CloseableHttpClient httpClient = HttpClients.createDefault()) {
+            HttpPost post = new HttpPost(whisperApiUrl);
+            HttpEntity multipartEntity = MultipartEntityBuilder.create()
+                    .addPart("audio", new ByteArrayBody(wavData, "audio.wav"))
+                    .build();
+            post.setEntity(multipartEntity);
+
+            httpClient.execute(post, response -> {
+                String responseBody = EntityUtils.toString(response.getEntity());
+                if (response.getCode() == 200) {
+                    JSONObject jsonResponse = new JSONObject(responseBody);
+                    String transcribedText = jsonResponse.optString("text", "").trim();
+                    if (!transcribedText.isEmpty()) {
+                        System.out.println("Received text: " + transcribedText);
+                        sendJsonText(session, transcribedText);
+                    }
+                } else {
+                    System.err.println("Error from Whisper API: " + response.getCode() + " - " + responseBody);
+                }
+                return null;
+            });
+
+        } catch (Exception e) {
+            System.err.println("Failed to call Whisper API: " + e.getMessage());
+        }
+    }
+
+    /**
+     * **(新增)**
+     * 将裸的PCM数据包装成一个完整的WAV格式的字节数组。
+     * @param pcmData 原始的PCM音频数据
+     * @return 包含WAV头的完整WAV文件数据
+     * @throws IOException
+     */
+    private byte[] createWavFile(byte[] pcmData) throws IOException {
+        int totalAudioLen = pcmData.length;
+        int totalDataLen = totalAudioLen + 36; // 36是WAV头中除了RIFF id和size以及data id和size之外的部分
+        long byteRate = (long) SAMPLE_RATE * NUM_CHANNELS * BITS_PER_SAMPLE / 8;
+
+        ByteBuffer headerBuffer = ByteBuffer.allocate(44);
+        headerBuffer.order(ByteOrder.LITTLE_ENDIAN); // WAV标准使用小端字节序
+
+        headerBuffer.put("RIFF".getBytes());
+        headerBuffer.putInt(totalDataLen);
+        headerBuffer.put("WAVE".getBytes());
+        headerBuffer.put("fmt ".getBytes());
+        headerBuffer.putInt(16); // Subchunk1Size for PCM
+        headerBuffer.putShort((short) 1); // AudioFormat (1 for PCM)
+        headerBuffer.putShort(NUM_CHANNELS);
+        headerBuffer.putInt(SAMPLE_RATE);
+        headerBuffer.putInt((int) byteRate);
+        headerBuffer.putShort((short) (NUM_CHANNELS * BYTES_PER_SAMPLE)); // blockAlign
+        headerBuffer.putShort(BITS_PER_SAMPLE);
+        headerBuffer.put("data".getBytes());
+        headerBuffer.putInt(totalAudioLen);
+
+        // 将WAV头和PCM数据合并成一个字节数组
+        ByteArrayOutputStream wavOutputStream = new ByteArrayOutputStream();
+        wavOutputStream.write(headerBuffer.array());
+        wavOutputStream.write(pcmData);
+
+        return wavOutputStream.toByteArray();
+    }
+
+
+    // ... afterConnectionClosed, isSilent, sendJsonText 方法无变化 ...
+    @Override
+    public void afterConnectionClosed(WebSocketSession session, CloseStatus status) throws Exception {
+        System.out.println("Client disconnected: " + session.getId());
+        ByteArrayOutputStream buffer = audioBuffers.get(session.getId());
+        if (buffer != null && buffer.size() > 0) {
+            sendBufferAndReset(session, buffer);
+        }
+        audioBuffers.remove(session.getId());
         speakingState.remove(session.getId());
     }
 
     private boolean isSilent(byte[] payload) {
         if (payload == null || payload.length == 0) return true;
         long sumOfSquares = 0;
-        // 16-bit PCM, so 2 bytes per sample
         for (int i = 0; i < payload.length; i += 2) {
             if (i + 1 >= payload.length) break;
             short sample = (short) ((payload[i + 1] << 8) | (payload[i] & 0xFF));
@@ -101,64 +193,11 @@ public class SubtitleWebSocketHandler extends AbstractWebSocketHandler {
         return rms < SILENCE_THRESHOLD;
     }
 
-    /**
-     * 发送文本的总入口
-     * @param voskResult Vosk返回的JSON字符串
-     * @param isFinal    是否为需要切分的最终结果
-     */
-    private void sendText(WebSocketSession session, String voskResult, boolean isFinal) throws IOException {
-        if (voskResult == null || voskResult.isEmpty() || !session.isOpen()) return;
-
-        JSONObject json = new JSONObject(voskResult);
-        String text = json.optString("text", json.optString("partial", ""));
-
-        if (text.trim().isEmpty()) return;
-
-        if (isFinal) {
-            System.out.println("Final Result to split: " + text);
-            splitAndSendText(session, text);
-        } else {
-            System.out.println("Partial Result: " + text);
-            sendJsonText(session, text);
-        }
-    }
-
-    private void splitAndSendText(WebSocketSession session, String text) throws IOException {
-        if (text == null || text.trim().isEmpty()) return;
-        if (text.length() <= MAX_LINE_LENGTH) {
-            sendJsonText(session, text);
-            return;
-        }
-        System.out.println("Splitting long text...");
-        int currentPos = 0;
-        while (currentPos < text.length()) {
-            int searchEnd = Math.min(currentPos + MAX_LINE_LENGTH, text.length());
-            int splitPos = -1;
-            if (searchEnd == text.length()) {
-                splitPos = text.length();
-            } else {
-                for (int i = searchEnd - 1; i > currentPos; i--) {
-                    char ch = text.charAt(i);
-                    if (ch == '，' || ch == '。' || ch == '！' || ch == '？' || ch == ',' || ch == '.' || ch == '!' || ch == '?') {
-                        splitPos = i + 1;
-                        break;
-                    }
-                }
-            }
-            if (splitPos == -1) {
-                splitPos = searchEnd;
-            }
-            String chunk = text.substring(currentPos, splitPos);
-            sendJsonText(session, chunk);
-            currentPos = splitPos;
-        }
-    }
-
     private void sendJsonText(WebSocketSession session, String text) throws IOException {
         if (!session.isOpen() || text.trim().isEmpty()) return;
         JSONObject response = new JSONObject();
         response.put("text", text);
         session.sendMessage(new TextMessage(response.toString()));
-        System.out.println("Sent subtitle chunk: " + text);
+        System.out.println("Sent subtitle chunk to client: " + text);
     }
 }
