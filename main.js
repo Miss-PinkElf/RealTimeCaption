@@ -8,6 +8,7 @@ const {
 } = require("electron");
 const path = require("path");
 const isDev = require("electron-is-dev");
+const fs = require("fs/promises"); // 导入 fs/promises 模块
 
 let mainWindow;
 // 定义窗口的两种尺寸状态
@@ -71,7 +72,7 @@ ipcMain.on("close-window", () => {
   }
 });
 
-// 处理选择目录的请求
+// 处理选择目录的请求 (用于设置字幕导出路径)
 ipcMain.handle("select-directory", async () => {
   console.log("主进程：收到选择目录的请求");
   const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
@@ -82,6 +83,85 @@ ipcMain.handle("select-directory", async () => {
   }
   return null;
 });
+
+// 处理打开文件对话框的请求 (用于选择待转录的音视频文件)
+ipcMain.handle("open-file-dialog", async () => {
+  console.log("主进程：收到打开文件对话框的请求");
+  const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+    properties: ["openFile"],
+    filters: [
+      {
+        name: "Audio/Video Files",
+        extensions: [
+          "mp3",
+          "wav",
+          "mp4",
+          "mkv",
+          "mov",
+          "avi",
+          "flac",
+          "aac",
+          "m4a",
+        ], // 添加更多常见格式
+      },
+      { name: "All Files", extensions: ["*"] },
+    ],
+  });
+  if (!canceled) {
+    return filePaths[0];
+  }
+  return null;
+});
+
+// 新增：处理读取文件内容为 Blob 的请求
+ipcMain.handle("read-file-as-blob", async (event, filePath) => {
+  console.log(`主进程：收到读取文件请求 -> ${filePath}`);
+  try {
+    const fileBuffer = await fs.readFile(filePath);
+    // 直接返回 ArrayBuffer
+    return fileBuffer.buffer.slice(
+      fileBuffer.byteOffset,
+      fileBuffer.byteOffset + fileBuffer.byteLength
+    );
+  } catch (error) {
+    console.error("主进程：读取文件失败:", error);
+    throw error; // 抛出错误以便渲染进程捕获
+  }
+});
+
+// 新增：处理保存文件到本地的请求 (用于保存下载的字幕文件)
+ipcMain.handle(
+  "save-file-dialog",
+  async (event, filename, content, defaultPath = null) => {
+    console.log(`主进程：收到保存文件请求 -> ${filename}`);
+    let suggestedPath = filename;
+    if (defaultPath) {
+      // 如果提供了默认路径，则将其与文件名结合
+      suggestedPath = path.join(defaultPath, filename);
+    }
+
+    const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
+      defaultPath: suggestedPath,
+      filters: [
+        { name: "Subtitle Files", extensions: ["srt"] },
+        { name: "All Files", extensions: ["*"] },
+      ],
+    });
+
+    if (canceled) {
+      return null;
+    } else {
+      try {
+        await fs.writeFile(filePath, content, "utf-8");
+        console.log(`主进程：文件已保存到 -> ${filePath}`);
+        return filePath;
+      } catch (error) {
+        console.error("主进程：保存文件失败:", error);
+        throw error; // 抛出错误以便渲染进程捕获
+      }
+    }
+  }
+);
 
 // (核心) 处理调整窗口大小的请求
 ipcMain.on("resize-window", (event, { width, height }) => {

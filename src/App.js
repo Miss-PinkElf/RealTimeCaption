@@ -1,5 +1,5 @@
 // src/App.js
-import React, { useState, useCallback, useEffect, useRef } from "react"; // 1. 引入 useRef
+import React, { useState, useCallback, useEffect, useRef } from "react";
 import "./App.css";
 import {
   VscSettingsGear,
@@ -8,6 +8,8 @@ import {
 } from "react-icons/vsc";
 import { start, stop } from "./capturer";
 import SettingsModal from "./components/SettingsModal";
+import FileUploadButton from "./components/FileUploadButton"; // 引入 FileUploadButton 组件
+import AudioSourceToggleButton from "./components/AudioSourceToggleButton"; // 引入 AudioSourceToggleButton 组件
 
 const originalSize = { width: 800, height: 120 };
 const settingsOpenSize = { width: 800, height: 550 };
@@ -16,30 +18,22 @@ function App() {
   const [isCapturing, setIsCapturing] = useState(false);
   const [subtitles, setSubtitles] = useState("双击此处开始/停止识别");
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [exportPath, setExportPath] = useState(null);
+  const [exportPath, setExportPath] = useState(null); // 字幕文件导出路径
 
-  // --- (核心修改) ---
-  // 2. 新增状态来控制面板（背景、按钮）的可见性
   const [isPanelVisible, setIsPanelVisible] = useState(false);
-  // 3. 使用 useRef 来存储定时器 ID，它能在组件重渲染之间保持不变
   const fadeOutTimer = useRef(null);
+  const [audioSource, setAudioSource] = useState("desktop"); // 新增音频源状态
 
-  // 4. 鼠标进入时的处理函数
   const handleMouseEnter = () => {
-    // 清除任何可能存在的“淡出”定时器
     clearTimeout(fadeOutTimer.current);
-    // 立即显示面板
     setIsPanelVisible(true);
   };
 
-  // 5. 鼠标离开时的处理函数
   const handleMouseLeave = () => {
-    // 设置一个 2 秒后执行的“淡出”定时器
     fadeOutTimer.current = setTimeout(() => {
       setIsPanelVisible(false);
-    }, 1300); // 2000毫秒 = 2秒
+    }, 1300);
   };
-  // --- (修改结束) ---
 
   useEffect(() => {
     if (isSettingsOpen) {
@@ -50,6 +44,7 @@ function App() {
   }, [isSettingsOpen]);
 
   useEffect(() => {
+    // 应用启动时从 localStorage 加载导出路径
     const savedPath = localStorage.getItem("exportPath");
     if (savedPath) {
       setExportPath(savedPath);
@@ -67,7 +62,7 @@ function App() {
   }, []);
 
   const handleStartStop = () => {
-    if (isSettingsOpen) return;
+    if (isSettingsOpen) return; // 如果设置面板打开，则禁用双击操作
     const nextState = !isCapturing;
     setIsCapturing(nextState);
 
@@ -76,6 +71,7 @@ function App() {
       start({
         onSubtitle: handleSubtitleUpdate,
         onError: handleCaptureError,
+        audioSource: audioSource, // 传递当前的音频源给 capturer.js
       });
     } else {
       stop();
@@ -95,9 +91,28 @@ function App() {
     setIsSettingsOpen(!isSettingsOpen);
   };
 
+  const handleToggleAudioSource = () => {
+    const newSource = audioSource === "desktop" ? "microphone" : "desktop";
+    setAudioSource(newSource);
+    // 如果正在捕获，则重启捕获以切换音频源
+    if (isCapturing) {
+      stop(); // 停止当前捕获
+      setSubtitles(
+        `切换到${newSource === "desktop" ? "桌面音频" : "麦克风"}并重启识别...`
+      );
+      // 延迟一小段时间再开始，确保停止操作完成
+      setTimeout(() => {
+        start({
+          onSubtitle: handleSubtitleUpdate,
+          onError: handleCaptureError,
+          audioSource: newSource,
+        });
+      }, 100); // 100ms 延迟
+    }
+  };
+
   return (
     <div
-      // 6. (核心修改) 根据 isPanelVisible 状态动态添加CSS类，并绑定事件处理器
       className={`App ${isPanelVisible ? "panel-visible" : ""}`}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
@@ -105,27 +120,52 @@ function App() {
       title="在字幕区域双击可开始/停止识别"
     >
       {/* 顶部控制区域 */}
-      <div className="top-controls-area">
-        <button onClick={handleToggleSettings} title="设置">
-          <VscSettingsGear />
-        </button>
-        <button onClick={handleMinimize} title="最小化">
-          <VscChromeMinimize />
-        </button>
-        <button onClick={handleClose} title="关闭">
-          <VscChromeClose />
-        </button>
+      <div className="top-controls-area" style={{ WebkitAppRegion: "drag" }}>
+        {" "}
+        {/* 使整个顶部区域可拖拽 */}
+        <div
+          style={{ WebkitAppRegion: "no-drag", display: "flex", gap: "8px" }}
+        >
+          {" "}
+          {/* 按钮区域不可拖拽 */}
+          <FileUploadButton exportPath={exportPath} /> {/* 传递 exportPath */}
+          <AudioSourceToggleButton
+            audioSource={audioSource}
+            onToggle={handleToggleAudioSource}
+          />
+          <button onClick={handleToggleSettings} title="设置">
+            <VscSettingsGear />
+          </button>
+        </div>
+        <div
+          style={{ WebkitAppRegion: "no-drag", display: "flex", gap: "8px" }}
+        >
+          {" "}
+          {/* 窗口控制按钮区域不可拖拽 */}
+          <button onClick={handleMinimize} title="最小化">
+            <VscChromeMinimize />
+          </button>
+          <button onClick={handleClose} title="关闭">
+            <VscChromeClose />
+          </button>
+        </div>
       </div>
 
       {/* 字幕显示区域 */}
-      <div className="subtitle-display-area">
+      <div
+        className="subtitle-display-area"
+        style={{ WebkitAppRegion: "no-drag" }}
+      >
+        {" "}
+        {/* 字幕区域不可拖拽 */}
         <p className="subtitle-text">{subtitles}</p>
       </div>
 
       {/* 设置面板 */}
       {isSettingsOpen && (
         <>
-          <div className="modal-overlay" />
+          <div className="modal-overlay" onClick={handleToggleSettings} />{" "}
+          {/* 点击 overlay 也可以关闭 */}
           <div className="settings-modal-container">
             <SettingsModal
               onClose={handleToggleSettings}

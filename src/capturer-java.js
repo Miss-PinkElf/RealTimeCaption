@@ -1,7 +1,5 @@
 // src/capturer.js
-
-// 1. 修改为 Python 后端的正确地址
-const BACKEND_WS_URL = "ws://localhost:8000/ws";
+const BACKEND_WS_URL = "ws://localhost:8080/audio";
 
 // --- 全局变量 ---
 let ws;
@@ -11,7 +9,17 @@ let sourceNode;
 let mediaStream; // 存储 mediaStream 以便可以停止它
 
 // --- 音频处理函数 ---
-// floatTo16BitPCM 函数已被移除，因为后端直接处理 Float32 数据
+/**
+ * 将 Float32Array 的音频数据转换为 Int16Array 的 PCM 数据
+ */
+function floatTo16BitPCM(input) {
+  const output = new Int16Array(input.length);
+  for (let i = 0; i < input.length; i++) {
+    const s = Math.max(-1, Math.min(1, input[i]));
+    output[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+  }
+  return output;
+}
 
 /**
  * 重新采样音频数据到目标采样率 (16000Hz)
@@ -53,8 +61,9 @@ async function getAudioStream(audioSource) {
       audio: true,
       video: false,
     });
-  } // 默认是桌面音频
+  }
 
+  // 默认是桌面音频
   console.log("渲染进程：正在请求桌面音频源...");
   const sourceId = await window.electronAPI.getDesktopAudioSource();
   if (!sourceId) throw new Error("无法获取桌面音频源。");
@@ -86,26 +95,27 @@ async function start({ onSubtitle, onError, audioSource = "desktop" }) {
 
     audioContext = new (window.AudioContext || window.webkitAudioContext)();
     const sourceSampleRate = audioContext.sampleRate;
-    // 【修改】将 bufferSize 从 4096 修改为 512
-    const bufferSize = 2048;
+    const bufferSize = 4096;
 
     sourceNode = audioContext.createMediaStreamSource(mediaStream);
+
     scriptProcessor = audioContext.createScriptProcessor(bufferSize, 1, 1);
 
     scriptProcessor.onaudioprocess = (e) => {
-      console.log("音频处理事件触发 (onaudioprocess called)");
       if (!ws || ws.readyState !== WebSocket.OPEN) {
         return;
       }
-      const inputData = e.inputBuffer.getChannelData(0); // 1. 重新采样到 16000 Hz
+      // 获取原始的 Float32 音频数据
+      const inputData = e.inputBuffer.getChannelData(0);
 
-      const resampledData = resample(inputData, sourceSampleRate, 16000); // 2. 直接发送 Float32 格式的二进制数据
-      // --- 添加调试日志 ---
-      console.log(
-        `准备发送数据包，大小: ${resampledData.buffer.byteLength} bytes`
-      );
-      // -------------------
-      ws.send(resampledData.buffer);
+      // 1. 重新采样到 16000 Hz
+      const resampledData = resample(inputData, sourceSampleRate, 16000);
+
+      // 2. 转换为 16-bit PCM 格式
+      const pcmData = floatTo16BitPCM(resampledData);
+
+      // 3. 发送原始字节数据
+      ws.send(pcmData.buffer);
     };
 
     sourceNode.connect(scriptProcessor);
@@ -119,8 +129,14 @@ async function start({ onSubtitle, onError, audioSource = "desktop" }) {
     };
 
     ws.onmessage = (event) => {
-      // 3. 直接使用 event.data，因为它就是纯文本字幕
-      onSubtitle(event.data);
+      try {
+        const message = JSON.parse(event.data);
+        if (message.text) {
+          onSubtitle(message.text);
+        }
+      } catch (e) {
+        console.error("渲染进程：处理后端消息失败:", event.data, e);
+      }
     };
 
     ws.onerror = (error) => {
@@ -131,6 +147,9 @@ async function start({ onSubtitle, onError, audioSource = "desktop" }) {
 
     ws.onclose = () => {
       console.log("渲染进程：与后端 WebSocket 连接已关闭");
+      // Don't show an error if we closed it intentionally
+      // onError("与后端服务连接已断开");
+      // stop();
     };
   } catch (e) {
     console.error("渲染进程：捕获或连接失败:", e);
@@ -165,6 +184,7 @@ async function stop() {
   if (ws) {
     if (ws.readyState === WebSocket.OPEN) {
       ws.close();
+      console.log("渲染进程：WebSocket 连接已关闭");
     }
     ws = null;
   }

@@ -1,6 +1,9 @@
 # Getting Started with Create React App
 
 This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+./whisper-server.exe -m "/e/Learn/Vs/Code/whisper.cpp/models/ggml-base.bin" --host 0.0.0.0 --port 8081 --language zh --prompt "这是一段普通的中文普通话测试。"
+cd "/e/Learn/Vs/Code/whisper.cpp/build/bin"
+cd "/e/Learn/Vs/Code/whisper.cpp"
 
 ## Available Scripts
 
