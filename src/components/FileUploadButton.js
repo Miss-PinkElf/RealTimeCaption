@@ -2,21 +2,26 @@
 import React, { useState } from "react";
 import { VscCloudUpload } from "react-icons/vsc";
 
+// --- 新增：一个辅助函数，用于从 Content-Disposition 头中解析文件名 ---
+const getFilenameFromHeader = (header) => {
+  if (!header) return null;
+  const match = header.match(/filename="?([^"]+)"?/);
+  return match ? match[1] : null;
+};
+
 const FileUploadButton = ({ exportPath }) => {
   // 接收 exportPath prop
   const [uploadStatus, setUploadStatus] = useState("");
-  const [downloadLink, setDownloadLink] = useState(null);
   const [loading, setLoading] = useState(false);
 
-  // 后端文件上传和下载接口地址
-  const BACKEND_UPLOAD_URL = "http://localhost:8000/upload/transcribe-file/";
-  const BACKEND_DOWNLOAD_BASE_URL =
-    "http://localhost:8000/upload/download-srt/";
+  // --- 修改：后端接口地址现在只需要上传的 URL ---
+  const BACKEND_UPLOAD_URL = "http://localhost:8000/upload-and-transcribe/"; // 确保末尾有斜杠
+
+  // --- 删除：不再需要 downloadLink state 和 BACKEND_DOWNLOAD_BASE_URL ---
 
   const handleFileSelect = async () => {
     setUploadStatus("正在等待选择文件...");
-    setDownloadLink(null);
-    setLoading(false); // 重置 loading 状态
+    setLoading(false);
 
     // 通过 Electron IPC 调用主进程的文件选择对话框
     const filePath = await window.electronAPI.openFileDialog();
@@ -29,83 +34,63 @@ const FileUploadButton = ({ exportPath }) => {
         // 通过 Electron IPC 调用主进程读取文件内容为 Blob
         const fileBlob = await window.electronAPI.readFileAsBlob(filePath);
         if (!fileBlob) {
-          setUploadStatus("读取文件失败。");
-          setLoading(false);
-          return;
+          throw new Error("读取文件失败。");
         }
 
-        // 创建 FormData 对象以发送文件
         const formData = new FormData();
-        // fileBlob 是文件的二进制内容，filePath.split('/').pop() 从路径中提取文件名
-        formData.append("file", fileBlob, filePath.split(/[\/\\]/).pop()); // 兼容 Windows 和 Linux 路径分隔符
+        formData.append("file", fileBlob, filePath.split(/[\/\\]/).pop());
 
         setUploadStatus("文件正在上传并生成字幕，请稍候...");
 
-        // 发送文件到后端 FastAPI 接口
+        // --- 核心修改：调整 fetch 的响应处理逻辑 ---
         const response = await fetch(BACKEND_UPLOAD_URL, {
           method: "POST",
           body: formData,
         });
 
-        const data = await response.json();
-        setLoading(false); // 停止加载
+        // 如果响应不成功，尝试解析JSON获取错误信息
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(
+            `上传失败: ${errorData.detail || response.statusText}`
+          );
+        }
 
-        if (response.ok) {
-          setUploadStatus(`上传成功！ ${data.message}`);
-          if (data.srt_filename) {
-            // 后端返回了字幕文件名，构建下载链接
-            const srtDownloadUrl = `${BACKEND_DOWNLOAD_BASE_URL}${data.srt_filename}`;
-            setDownloadLink({
-              filename: data.srt_filename,
-              url: srtDownloadUrl,
-            });
-          }
+        // 如果响应成功，后端直接返回了文件流
+        setUploadStatus("字幕生成成功！正在准备下载...");
+
+        // 1. 从响应头获取服务器建议的文件名
+        const contentDisposition = response.headers.get("content-disposition");
+        const filename =
+          getFilenameFromHeader(contentDisposition) || "subtitle.srt";
+
+        // 2. 将响应体作为文本（SRT内容）读取
+        const srtContent = await response.text();
+
+        // 3. 立即调用 Electron 的保存对话框
+        const savedPath = await window.electronAPI.saveFileDialog(
+          filename,
+          srtContent,
+          exportPath // 使用从 App.js 传递的默认路径
+        );
+
+        if (savedPath) {
+          setUploadStatus(`字幕文件已成功保存到：${savedPath}`);
         } else {
-          setUploadStatus(`上传失败: ${data.detail || "未知错误"}`);
-          console.error("后端返回错误:", data);
+          setUploadStatus("取消保存字幕文件。");
         }
       } catch (error) {
         setUploadStatus(`处理失败: ${error.message}`);
         console.error("文件上传或处理错误:", error);
-        setLoading(false);
+      } finally {
+        setLoading(false); // 无论成功与否，最后都停止加载
       }
     } else {
       setUploadStatus("未选择文件。");
     }
   };
 
-  const downloadSrtFile = async () => {
-    if (!downloadLink) {
-      alert("请等待字幕生成完成。");
-      return;
-    }
-
-    setUploadStatus("正在下载字幕文件...");
-    try {
-      // 从后端下载 SRT 文件的内容
-      const response = await fetch(downloadLink.url);
-      if (!response.ok) {
-        throw new Error(`下载失败: ${response.statusText}`);
-      }
-      const srtContent = await response.text(); // 获取 SRT 文本内容
-
-      // 通过 Electron IPC 调用主进程保存文件对话框，并传入默认导出路径
-      const savedPath = await window.electronAPI.saveFileDialog(
-        downloadLink.filename,
-        srtContent,
-        exportPath // 将从 App.js 传递的 exportPath 作为默认保存路径
-      );
-
-      if (savedPath) {
-        setUploadStatus(`字幕文件已成功保存到：${savedPath}`);
-      } else {
-        setUploadStatus("取消保存字幕文件。");
-      }
-    } catch (error) {
-      setUploadStatus(`下载或保存失败: ${error.message}`);
-      console.error("下载或保存 SRT 文件失败:", error);
-    }
-  };
+  // --- 删除：不再需要独立的 downloadSrtFile 函数 ---
 
   return (
     <div>
@@ -115,17 +100,11 @@ const FileUploadButton = ({ exportPath }) => {
         disabled={loading}
       >
         <VscCloudUpload />
-        {loading && " (处理中...)"}
+        {loading ? " (处理中...)" : " 上传并生成字幕"}
       </button>
       <p>{uploadStatus}</p>
-      {downloadLink && (
-        <div>
-          <button onClick={downloadSrtFile} disabled={loading}>
-            下载字幕文件 ({downloadLink.filename})
-          </button>
-          <p>注意：字幕生成可能需要一些时间，如果下载失败请稍后重试。</p>
-        </div>
-      )}
+
+      {/* --- 修改：UI简化，移除下载按钮相关的部分 --- */}
     </div>
   );
 };
