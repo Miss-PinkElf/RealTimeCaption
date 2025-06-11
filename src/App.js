@@ -8,21 +8,23 @@ import {
 } from "react-icons/vsc";
 import { start, stop } from "./capturer";
 import SettingsModal from "./components/SettingsModal";
-import FileUploadButton from "./components/FileUploadButton"; // 引入 FileUploadButton 组件
-import AudioSourceToggleButton from "./components/AudioSourceToggleButton"; // 引入 AudioSourceToggleButton 组件
+import FileUploadButton from "./components/FileUploadButton";
+import AudioSourceToggleButton from "./components/AudioSourceToggleButton";
 
 const originalSize = { width: 800, height: 120 };
-const settingsOpenSize = { width: 800, height: 550 };
+const settingsOpenSize = { width: 800, height: 600 };
 
 function App() {
   const [isCapturing, setIsCapturing] = useState(false);
   const [subtitles, setSubtitles] = useState("双击此处开始/停止识别");
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [exportPath, setExportPath] = useState(null); // 字幕文件导出路径
-
+  const [exportPath, setExportPath] = useState(null);
   const [isPanelVisible, setIsPanelVisible] = useState(false);
   const fadeOutTimer = useRef(null);
-  const [audioSource, setAudioSource] = useState("desktop"); // 新增音频源状态
+  const [audioSource, setAudioSource] = useState("desktop");
+
+  // 状态：local 代表本地 Whisper, cloud 代表云端 API
+  const [engine, setEngine] = useState("local");
 
   const handleMouseEnter = () => {
     clearTimeout(fadeOutTimer.current);
@@ -44,10 +46,13 @@ function App() {
   }, [isSettingsOpen]);
 
   useEffect(() => {
-    // 应用启动时从 localStorage 加载导出路径
     const savedPath = localStorage.getItem("exportPath");
     if (savedPath) {
       setExportPath(savedPath);
+    }
+    const savedEngine = localStorage.getItem("recognitionEngine");
+    if (savedEngine) {
+      setEngine(savedEngine);
     }
   }, []);
 
@@ -62,16 +67,17 @@ function App() {
   }, []);
 
   const handleStartStop = () => {
-    if (isSettingsOpen) return; // 如果设置面板打开，则禁用双击操作
+    if (isSettingsOpen) return;
     const nextState = !isCapturing;
     setIsCapturing(nextState);
 
     if (nextState) {
-      setSubtitles("正在获取音频设备...");
+      setSubtitles("正在连接服务...");
       start({
         onSubtitle: handleSubtitleUpdate,
         onError: handleCaptureError,
-        audioSource: audioSource, // 传递当前的音频源给 capturer.js
+        audioSource: audioSource,
+        engine: engine,
       });
     } else {
       stop();
@@ -79,37 +85,28 @@ function App() {
     }
   };
 
-  const handleMinimize = () => {
-    window.electronAPI.minimizeWindow();
-  };
-
-  const handleClose = () => {
-    window.electronAPI.closeWindow();
-  };
-
-  const handleToggleSettings = () => {
-    setIsSettingsOpen(!isSettingsOpen);
-  };
-
   const handleToggleAudioSource = () => {
     const newSource = audioSource === "desktop" ? "microphone" : "desktop";
     setAudioSource(newSource);
-    // 如果正在捕获，则重启捕获以切换音频源
     if (isCapturing) {
-      stop(); // 停止当前捕获
+      stop();
       setSubtitles(
-        `切换到${newSource === "desktop" ? "桌面音频" : "麦克风"}并重启识别...`
+        `切换到${newSource === "desktop" ? "桌面音频" : "麦克风"}并重启...`
       );
-      // 延迟一小段时间再开始，确保停止操作完成
       setTimeout(() => {
         start({
           onSubtitle: handleSubtitleUpdate,
           onError: handleCaptureError,
           audioSource: newSource,
+          engine: engine,
         });
-      }, 100); // 100ms 延迟
+      }, 100);
     }
   };
+
+  const handleMinimize = () => window.electronAPI.minimizeWindow();
+  const handleClose = () => window.electronAPI.closeWindow();
+  const handleToggleSettings = () => setIsSettingsOpen(!isSettingsOpen);
 
   return (
     <div
@@ -119,16 +116,11 @@ function App() {
       onDoubleClick={handleStartStop}
       title="在字幕区域双击可开始/停止识别"
     >
-      {/* 顶部控制区域 */}
       <div className="top-controls-area" style={{ WebkitAppRegion: "drag" }}>
-        {" "}
-        {/* 使整个顶部区域可拖拽 */}
         <div
           style={{ WebkitAppRegion: "no-drag", display: "flex", gap: "8px" }}
         >
-          {" "}
-          {/* 按钮区域不可拖拽 */}
-          <FileUploadButton exportPath={exportPath} /> {/* 传递 exportPath */}
+          <FileUploadButton exportPath={exportPath} />
           <AudioSourceToggleButton
             audioSource={audioSource}
             onToggle={handleToggleAudioSource}
@@ -140,8 +132,6 @@ function App() {
         <div
           style={{ WebkitAppRegion: "no-drag", display: "flex", gap: "8px" }}
         >
-          {" "}
-          {/* 窗口控制按钮区域不可拖拽 */}
           <button onClick={handleMinimize} title="最小化">
             <VscChromeMinimize />
           </button>
@@ -151,26 +141,23 @@ function App() {
         </div>
       </div>
 
-      {/* 字幕显示区域 */}
       <div
         className="subtitle-display-area"
         style={{ WebkitAppRegion: "no-drag" }}
       >
-        {" "}
-        {/* 字幕区域不可拖拽 */}
         <p className="subtitle-text">{subtitles}</p>
       </div>
 
-      {/* 设置面板 */}
       {isSettingsOpen && (
         <>
-          <div className="modal-overlay" onClick={handleToggleSettings} />{" "}
-          {/* 点击 overlay 也可以关闭 */}
+          <div className="modal-overlay" onClick={handleToggleSettings} />
           <div className="settings-modal-container">
             <SettingsModal
               onClose={handleToggleSettings}
               exportPath={exportPath}
               setExportPath={setExportPath}
+              engine={engine}
+              setEngine={setEngine}
             />
           </div>
         </>

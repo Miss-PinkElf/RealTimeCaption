@@ -1,9 +1,8 @@
 "use client";
 import { VscChromeClose } from "react-icons/vsc";
 
-// 设置模态框样式
+// ... 样式代码保持不变 ...
 const settingsModalStyle = {
-  // 尺寸和外观
   width: "90%",
   maxWidth: "600px",
   backgroundColor: "rgba(40, 42, 48, 0.95)",
@@ -12,23 +11,14 @@ const settingsModalStyle = {
   boxShadow: "0 8px 30px rgba(0, 0, 0, 0.3)",
   border: "1px solid rgba(255, 255, 255, 0.1)",
   color: "#e8e8e8",
-
-  // 内部布局
   display: "flex",
   flexDirection: "column",
   textAlign: "left",
-
-  // Electron 属性 - 确保模态框区域不可拖拽
   WebkitAppRegion: "no-drag",
-
-  // 定位
   position: "relative",
   zIndex: 100,
-
-  // 确保鼠标事件正常
   pointerEvents: "auto",
 };
-
 const closeIconStyle = {
   position: "absolute",
   top: "15px",
@@ -44,18 +34,13 @@ const closeIconStyle = {
   zIndex: 101,
   pointerEvents: "auto",
 };
-
-const formGroupStyle = {
-  marginBottom: "20px",
-};
-
+const formGroupStyle = { marginBottom: "20px" };
 const labelStyle = {
   display: "block",
   marginBottom: "8px",
   color: "#aaa",
   fontSize: "14px",
 };
-
 const pathDisplayStyle = {
   backgroundColor: "rgba(0,0,0,0.3)",
   padding: "10px 12px",
@@ -64,7 +49,6 @@ const pathDisplayStyle = {
   wordWrap: "break-word",
   color: "#d0d0d0",
 };
-
 const buttonStyle = {
   background: "rgba(255, 255, 255, 0.1)",
   border: "1px solid rgba(255, 255, 255, 0.2)",
@@ -73,11 +57,17 @@ const buttonStyle = {
   borderRadius: "5px",
   cursor: "pointer",
   transition: "background-color 0.2s ease, transform 0.2s ease",
-  WebkitAppRegion: "no-drag", // 确保按钮不可拖拽
+  WebkitAppRegion: "no-drag",
   pointerEvents: "auto",
 };
 
-const SettingsModal = ({ onClose, exportPath, setExportPath }) => {
+const SettingsModal = ({
+  onClose,
+  exportPath,
+  setExportPath,
+  engine,
+  setEngine,
+}) => {
   const handleSelectDir = async () => {
     const path = await window.electronAPI.selectDirectory();
     if (path) {
@@ -86,9 +76,14 @@ const SettingsModal = ({ onClose, exportPath, setExportPath }) => {
     }
   };
 
+  const handleEngineChange = (event) => {
+    const newEngine = event.target.value;
+    setEngine(newEngine);
+    localStorage.setItem("recognitionEngine", newEngine);
+  };
+
   return (
     <div style={settingsModalStyle}>
-      {/* 关闭按钮 */}
       <button
         style={closeIconStyle}
         onClick={onClose}
@@ -118,6 +113,26 @@ const SettingsModal = ({ onClose, exportPath, setExportPath }) => {
       </h3>
 
       <div style={formGroupStyle}>
+        <label style={labelStyle}>语音识别引擎:</label>
+        <select
+          style={{
+            ...buttonStyle,
+            width: "100%",
+            padding: "10px",
+            pointerEvents: "auto",
+          }}
+          value={engine}
+          onChange={handleEngineChange}
+        >
+          <option value="local">本地 Whisper 模型</option>
+          <option value="cloud">云端 API 模型 (百炼)</option>
+        </select>
+        <p style={{ fontSize: "12px", color: "#888", marginTop: "8px" }}>
+          切换引擎后，需要重新开始识别才能生效。
+        </p>
+      </div>
+
+      <div style={formGroupStyle}>
         <label style={labelStyle}>字幕导出目录:</label>
         <p style={pathDisplayStyle}>{exportPath || "尚未设置"}</p>
         <button
@@ -134,23 +149,6 @@ const SettingsModal = ({ onClose, exportPath, setExportPath }) => {
         >
           选择文件夹
         </button>
-      </div>
-
-      <div style={formGroupStyle}>
-        <label style={labelStyle}>语音识别模式:</label>
-        <select
-          style={{
-            ...buttonStyle,
-            width: "100%",
-            padding: "10px",
-            pointerEvents: "auto",
-          }}
-        >
-          <option value="local">本地 Whisper 模型</option>
-          <option value="api" disabled>
-            云端 API (待实现)
-          </option>
-        </select>
       </div>
 
       <div style={{ marginTop: "35px", textAlign: "right" }}>

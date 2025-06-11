@@ -1,21 +1,14 @@
-// src/capturer.js
+// 核心修改：定义唯一的后端服务地址
+const BACKEND_URL = "ws://localhost:8000/ws";
 
-// 1. 修改为 Python 后端的正确地址
-const BACKEND_WS_URL = "ws://localhost:8000/ws";
-
-// --- 全局变量 ---
+// --- 全局变量 (保持不变) ---
 let ws;
 let audioContext;
 let scriptProcessor;
 let sourceNode;
-let mediaStream; // 存储 mediaStream 以便可以停止它
+let mediaStream;
 
-// --- 音频处理函数 ---
-// floatTo16BitPCM 函数已被移除，因为后端直接处理 Float32 数据
-
-/**
- * 重新采样音频数据到目标采样率 (16000Hz)
- */
+// --- 音频处理函数 (保持不变) ---
 function resample(audioBuffer, fromSampleRate, toSampleRate) {
   if (fromSampleRate === toSampleRate) {
     return audioBuffer;
@@ -44,21 +37,12 @@ function resample(audioBuffer, fromSampleRate, toSampleRate) {
   return result;
 }
 
-// --- 核心逻辑 ---
-
 async function getAudioStream(audioSource) {
   if (audioSource === "microphone") {
-    console.log("渲染进程：正在请求麦克风权限...");
-    return navigator.mediaDevices.getUserMedia({
-      audio: true,
-      video: false,
-    });
-  } // 默认是桌面音频
-
-  console.log("渲染进程：正在请求桌面音频源...");
+    return navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+  }
   const sourceId = await window.electronAPI.getDesktopAudioSource();
   if (!sourceId) throw new Error("无法获取桌面音频源。");
-
   return navigator.mediaDevices.getUserMedia({
     audio: {
       mandatory: {
@@ -75,8 +59,16 @@ async function getAudioStream(audioSource) {
   });
 }
 
-async function start({ onSubtitle, onError, audioSource = "desktop" }) {
-  console.log(`渲染进程：准备开始捕获 (${audioSource})...`);
+// 修改: start 函数接收 engine 参数
+async function start({
+  onSubtitle,
+  onError,
+  audioSource = "desktop",
+  engine = "local",
+}) {
+  console.log(
+    `渲染进程：准备开始捕获，请求引擎: ${engine}，音频源: ${audioSource}`
+  );
   if (audioContext) {
     await stop();
   }
@@ -86,51 +78,40 @@ async function start({ onSubtitle, onError, audioSource = "desktop" }) {
 
     audioContext = new (window.AudioContext || window.webkitAudioContext)();
     const sourceSampleRate = audioContext.sampleRate;
-    // 【修改】将 bufferSize 从 4096 修改为 512
     const bufferSize = 2048;
 
     sourceNode = audioContext.createMediaStreamSource(mediaStream);
     scriptProcessor = audioContext.createScriptProcessor(bufferSize, 1, 1);
 
     scriptProcessor.onaudioprocess = (e) => {
-      console.log("音频处理事件触发 (onaudioprocess called)");
-      if (!ws || ws.readyState !== WebSocket.OPEN) {
-        return;
-      }
-      const inputData = e.inputBuffer.getChannelData(0); // 1. 重新采样到 16000 Hz
-
-      const resampledData = resample(inputData, sourceSampleRate, 16000); // 2. 直接发送 Float32 格式的二进制数据
-      // --- 添加调试日志 ---
-      console.log(
-        `准备发送数据包，大小: ${resampledData.buffer.byteLength} bytes`
-      );
-      // -------------------
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      const inputData = e.inputBuffer.getChannelData(0);
+      const resampledData = resample(inputData, sourceSampleRate, 16000);
       ws.send(resampledData.buffer);
     };
 
     sourceNode.connect(scriptProcessor);
     scriptProcessor.connect(audioContext.destination);
 
-    ws = new WebSocket(BACKEND_WS_URL);
+    // --- 核心修改：通过 URL 查询参数告诉后端使用哪个引擎 ---
+    const wsUrlWithEngine = `${BACKEND_URL}?engine=${engine}`;
+    console.log(`正在连接到后端: ${wsUrlWithEngine}`);
+    ws = new WebSocket(wsUrlWithEngine);
+    // --- 修改结束 ---
 
     ws.onopen = () => {
-      console.log("渲染进程：与后端 WebSocket 连接成功");
-      onSubtitle("服务连接成功，开始识别...");
+      /* ... */
     };
-
     ws.onmessage = (event) => {
-      // 3. 直接使用 event.data，因为它就是纯文本字幕
       onSubtitle(event.data);
     };
-
     ws.onerror = (error) => {
-      console.error("渲染进程：WebSocket 错误:", error);
-      onError("与后端服务连接失败");
+      console.error(`渲染进程：WebSocket 错误 (引擎: ${engine}):`, error);
+      onError(`与后端服务连接失败`);
       stop();
     };
-
     ws.onclose = () => {
-      console.log("渲染进程：与后端 WebSocket 连接已关闭");
+      /* ... */
     };
   } catch (e) {
     console.error("渲染进程：捕获或连接失败:", e);
@@ -141,32 +122,28 @@ async function start({ onSubtitle, onError, audioSource = "desktop" }) {
 
 async function stop() {
   console.log("渲染进程：正在停止捕获...");
-
-  if (mediaStream) {
-    mediaStream.getTracks().forEach((track) => track.stop());
-    mediaStream = null;
-  }
-
-  if (sourceNode) {
-    sourceNode.disconnect();
-    sourceNode = null;
-  }
-
-  if (scriptProcessor) {
-    scriptProcessor.disconnect();
-    scriptProcessor = null;
-  }
-
-  if (audioContext) {
-    await audioContext.close();
-    audioContext = null;
-  }
-
   if (ws) {
     if (ws.readyState === WebSocket.OPEN) {
       ws.close();
     }
     ws = null;
   }
+  if (mediaStream) {
+    mediaStream.getTracks().forEach((track) => track.stop());
+    mediaStream = null;
+  }
+  if (sourceNode) {
+    sourceNode.disconnect();
+    sourceNode = null;
+  }
+  if (scriptProcessor) {
+    scriptProcessor.disconnect();
+    scriptProcessor = null;
+  }
+  if (audioContext) {
+    await audioContext.close();
+    audioContext = null;
+  }
 }
+
 export { start, stop };
