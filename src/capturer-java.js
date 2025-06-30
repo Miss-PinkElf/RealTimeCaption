@@ -102,20 +102,25 @@ async function start({ onSubtitle, onError, audioSource = "desktop" }) {
     scriptProcessor = audioContext.createScriptProcessor(bufferSize, 1, 1);
 
     scriptProcessor.onaudioprocess = (e) => {
-      if (!ws || ws.readyState !== WebSocket.OPEN) {
-        return;
-      }
-      // 获取原始的 Float32 音频数据
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
       const inputData = e.inputBuffer.getChannelData(0);
+      const resampledData = resample(inputData, audioContext.sampleRate, 16000);
 
-      // 1. 重新采样到 16000 Hz
-      const resampledData = resample(inputData, sourceSampleRate, 16000);
+      // --- 开始：新增的格式转换逻辑 ---
+      const pcm16Data = new Int16Array(resampledData.length);
+      for (let i = 0; i < resampledData.length; i++) {
+        // 将浮点数样本限制在 -1.0 到 1.0 之间，防止溢出
+        let s = Math.max(-1, Math.min(1, resampledData[i]));
+        // 将浮点数转换为 16 位有符号整数
+        // 正数乘以 0x7FFF (32767)，负数乘以 0x8000 (-32768)
+        s = s < 0 ? s * 0x8000 : s * 0x7fff;
+        pcm16Data[i] = s;
+      }
+      // --- 结束：新增的格式转换逻辑 ---
 
-      // 2. 转换为 16-bit PCM 格式
-      const pcmData = floatTo16BitPCM(resampledData);
-
-      // 3. 发送原始字节数据
-      ws.send(pcmData.buffer);
+      // 发送转换后得到的 Int16Array 的 buffer
+      ws.send(pcm16Data.buffer);
     };
 
     sourceNode.connect(scriptProcessor);
